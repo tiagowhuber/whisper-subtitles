@@ -42,6 +42,23 @@ minutes (only that slice of audio is transcribed, so it's fast):
 whisper-subtitles '/path/to/movie.mkv' --minutes 10
 ```
 
+### Watch while it works (two-pass)
+
+A 2-hour film takes a while to transcribe. Do the opening first, start watching,
+and transcribe the rest in a second pass — both runs write the **same**
+`movie.es.srt`, so the second pass just fills in the rest:
+
+```sh
+whisper-subtitles 'movie.mkv' --minutes 10   # cues 0–10 min — start watching
+whisper-subtitles 'movie.mkv' --from 10       # cues 10 min → end, merged in
+```
+
+`--from N` starts at minute N; its cues are time-shifted to the real movie time
+and **merged** into the existing SRT (anything it re-covers is replaced, so
+re-runs don't duplicate). `--from`/`--minutes` compose: `--from 10 --minutes 5`
+does minutes 10–15. In VLC, reload the subtitle track after the second pass
+(**Subtitle → Sub Track**) to pick up the new cues.
+
 > Tip: type `whisper-subtitles ` then **Tab-complete** the filename — the
 > installed zsh alias also lets unquoted paths with spaces and `[brackets]` work.
 
@@ -58,6 +75,7 @@ $PY subtitle_movie.py movie.mkv -o out.es.srt
 $PY subtitle_movie.py movie.mkv --whisper-model medium   # faster, less accurate
 $PY subtitle_movie.py movie.mkv --source-lang en         # skip language auto-detect
 $PY subtitle_movie.py movie.mkv --minutes 10             # only the first 10 minutes
+$PY subtitle_movie.py movie.mkv --from 10                # minute 10 → end, merged into the .srt
 $PY subtitle_movie.py movie.mkv --device cpu             # force CPU
 $PY subtitle_movie.py movie.mkv --no-translate           # source-language SRT, no API key
 ```

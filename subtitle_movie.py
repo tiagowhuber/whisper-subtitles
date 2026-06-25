@@ -20,6 +20,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import sys
 import time
 
@@ -72,23 +73,28 @@ def load_model(model_name: str, want_device: str = "auto"):
     return model, device
 
 
-def transcribe(model, device, path: str, source_lang, minutes=None):
+def transcribe(model, device, path: str, source_lang, start_min=0.0, dur_min=None):
     """Transcribe the movie, keeping the source language. Returns Whisper segments.
 
-    If `minutes` is set, only the first `minutes` minutes of audio are
-    transcribed (the audio is sliced before Whisper sees it, so the rest of the
-    film is never processed).
+    Only the window [start_min, start_min + dur_min) minutes of audio is
+    transcribed: the audio is sliced before Whisper sees it, so the rest of the
+    film is never processed. dur_min=None means "to the end". Segment timestamps
+    are shifted by start_min so they line up with the real movie time.
     """
     import whisper
 
+    offset = (start_min or 0.0) * 60.0
     audio = path
-    if minutes:
-        # Whisper decodes to a 16 kHz mono float array; keep only the first slice.
+    if start_min or dur_min:
+        # Whisper decodes to a 16 kHz mono float array; keep only our window.
         full = whisper.load_audio(path)
-        keep = int(minutes * 60 * whisper.audio.SAMPLE_RATE)
-        audio = full[:keep]
-        log.info("Limiting to first %g minute(s) (%d of %d audio samples).",
-                 minutes, len(audio), len(full))
+        sr = whisper.audio.SAMPLE_RATE
+        lo = int((start_min or 0.0) * 60 * sr)
+        hi = int(((start_min or 0.0) + dur_min) * 60 * sr) if dur_min else None
+        audio = full[lo:hi]
+        log.info("Transcribing window: minute %g → %s (%d of %d audio samples).",
+                 start_min or 0.0, f"{(start_min or 0.0) + dur_min:g}" if dur_min else "end",
+                 len(audio), len(full))
 
     log.info("Transcribing '%s' (language=%s) …", path, source_lang or "auto")
     result = model.transcribe(
@@ -99,7 +105,7 @@ def transcribe(model, device, path: str, source_lang, minutes=None):
         verbose=False,
     )
     segments = [
-        {"start": s["start"], "end": s["end"], "text": s["text"].strip()}
+        {"start": s["start"] + offset, "end": s["end"] + offset, "text": s["text"].strip()}
         for s in result["segments"]
     ]
     log.info("Detected language: %s | %d segments", result.get("language"), len(segments))
@@ -194,6 +200,7 @@ def format_ts(seconds: float) -> str:
 
 
 def write_srt(segments: list, out_path: str) -> None:
+    segments = sorted(segments, key=lambda s: s["start"])
     index = 0
     with open(out_path, "w", encoding="utf-8") as f:
         for seg in segments:
@@ -207,6 +214,54 @@ def write_srt(segments: list, out_path: str) -> None:
     log.info("Wrote %s (%d cues)", out_path, index)
 
 
+_TS = re.compile(r"(\d+):(\d+):(\d+)[,.](\d+)\s*-->\s*(\d+):(\d+):(\d+)[,.](\d+)")
+
+
+def _ts_to_seconds(h, m, s, ms) -> float:
+    return int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000.0
+
+
+def read_srt(path: str) -> list:
+    """Parse an existing .srt back into [{'start','end','text'}] (best effort)."""
+    segs = []
+    with open(path, encoding="utf-8-sig") as f:
+        content = f.read()
+    for block in re.split(r"\n\s*\n", content.strip()):
+        lines = [ln for ln in block.splitlines() if ln.strip()]
+        ts_line = next((ln for ln in lines if _TS.search(ln)), None)
+        if not ts_line:
+            continue
+        m = _TS.search(ts_line)
+        text = "\n".join(lines[lines.index(ts_line) + 1:]).strip()
+        if not text:
+            continue
+        segs.append({
+            "start": _ts_to_seconds(*m.group(1, 2, 3, 4)),
+            "end": _ts_to_seconds(*m.group(5, 6, 7, 8)),
+            "text": text,
+        })
+    return segs
+
+
+def merge_window(out_path: str, new_segments: list, win_start: float, win_end) -> list:
+    """Splice freshly-transcribed cues into an existing SRT.
+
+    Existing cues whose start falls inside the just-transcribed window
+    [win_start, win_end) are dropped (this run is the source of truth for that
+    span); everything else is kept. Returns the combined, time-sorted list.
+    win_end=None means "to the end of the film".
+    """
+    existing = read_srt(out_path) if os.path.isfile(out_path) else []
+    kept = [
+        c for c in existing
+        if c["start"] < win_start or (win_end is not None and c["start"] >= win_end)
+    ]
+    if existing:
+        log.info("Merging into existing %s: kept %d cue(s) outside the window, "
+                 "added %d new.", os.path.basename(out_path), len(kept), len(new_segments))
+    return kept + new_segments
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 def main() -> int:
@@ -217,8 +272,13 @@ def main() -> int:
                    help=f"Whisper model size (default: {WHISPER_MODEL})")
     p.add_argument("--source-lang", default=None,
                    help="Source audio language code (default: auto-detect)")
-    p.add_argument("--minutes", type=float, default=None,
-                   help="Only subtitle the first N minutes of the movie (default: whole film)")
+    p.add_argument("--from", dest="start", type=float, default=None, metavar="N",
+                   help="Start at minute N (default: 0). Cues are merged into an "
+                        "existing .es.srt, so you can do the rest of a film in a second pass.")
+    p.add_argument("--minutes", type=float, default=None, metavar="N",
+                   help="Transcribe only N minutes (the window length). "
+                        "With --from this is the span starting there; alone it's the "
+                        "first N minutes (default: to the end of the film).")
     p.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto",
                    help="Where to run Whisper (default: auto; falls back to CPU on GPU OOM)")
     p.add_argument("--openai-model", default=OPENAI_MODEL,
@@ -236,6 +296,14 @@ def main() -> int:
     if args.minutes is not None and args.minutes <= 0:
         log.error("--minutes must be a positive number.")
         return 1
+    if args.start is not None and args.start < 0:
+        log.error("--from must be zero or a positive number.")
+        return 1
+
+    start_min = args.start or 0.0
+    dur_min = args.minutes
+    win_start = start_min * 60.0
+    win_end = (start_min + dur_min) * 60.0 if dur_min else None
 
     out_path = args.output
     if not out_path:
@@ -248,7 +316,7 @@ def main() -> int:
         return 1
 
     model, device = load_model(args.whisper_model, args.device)
-    segments = transcribe(model, device, args.input, args.source_lang, args.minutes)
+    segments = transcribe(model, device, args.input, args.source_lang, start_min, dur_min)
     if not segments:
         log.error("No speech segments found.")
         return 1
@@ -258,6 +326,8 @@ def main() -> int:
     else:
         translate_segments(segments, args.openai_model, args.batch_size)
 
+    # Splice this window into any existing SRT so multi-pass runs build one file.
+    segments = merge_window(out_path, segments, win_start, win_end)
     write_srt(segments, out_path)
     log.info("Done. Open the movie in VLC — '%s' loads automatically.",
              os.path.basename(out_path))

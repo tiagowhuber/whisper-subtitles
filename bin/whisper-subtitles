@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# whisper-subtitles <video file> [--minutes N]
+# whisper-subtitles <video file> [--from N] [--minutes N]
 # Generates a Spanish .srt next to the video. If a whisper voice daemon is
 # running, it's stopped to free the GPU and restarted afterwards (even on error).
 #
-#   --minutes N   only subtitle the first N minutes of the video
+#   --from N      start at minute N (cues are merged into an existing .es.srt)
+#   --minutes N   transcribe only an N-minute window (e.g. the first N minutes)
 #
 # Configuration (all optional, via environment or ~/.config/whisper-subtitles.env):
 #   OPENAI_API_KEY            required — your OpenAI key
@@ -51,11 +52,11 @@ EXTRA_ARGS=()
 PATH_PARTS=()
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --minutes)
+        --minutes|--from)
             EXTRA_ARGS+=("$1" "${2:-}")
-            shift 2 || { echo "--minutes needs a value" >&2; exit 1; }
+            shift 2 || { echo "$1 needs a value" >&2; exit 1; }
             ;;
-        --minutes=*)
+        --minutes=*|--from=*)
             EXTRA_ARGS+=("$1")
             shift
             ;;
@@ -67,7 +68,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ "${#PATH_PARTS[@]}" -lt 1 ]; then
-    echo "Usage: whisper-subtitles <video file> [--minutes N]" >&2
+    echo "Usage: whisper-subtitles <video file> [--from N] [--minutes N]" >&2
     exit 1
 fi
 FILE="${PATH_PARTS[*]}"
