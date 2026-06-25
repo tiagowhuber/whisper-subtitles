@@ -42,11 +42,24 @@ minutes (only that slice of audio is transcribed, so it's fast):
 whisper-subtitles '/path/to/movie.mkv' --minutes 10
 ```
 
-### Watch while it works (two-pass)
+### Watch while it works
 
-A 2-hour film takes a while to transcribe. Do the opening first, start watching,
-and transcribe the rest in a second pass — both runs write the **same**
-`movie.es.srt`, so the second pass just fills in the rest:
+A 2-hour film takes a while to transcribe. Easiest way — one command that does
+the opening first, writes the file so you can **start watching**, then finishes
+the rest in the same run:
+
+```sh
+whisper-subtitles 'movie.mkv' --head 10
+```
+
+`--head N` subtitles the first N minutes, writes `movie.es.srt`, then continues
+from minute N to the end, merging into the same file as it goes. Open the movie
+once the first chunk lands; reload the subtitle track in VLC (**Subtitle → Sub
+Track**) after it finishes to pick up the rest.
+
+Prefer to drive it yourself in two passes (e.g. transcribe the rest on another
+machine, or only later)? `--head` is just shorthand for these two runs, which
+both write the **same** `movie.es.srt`:
 
 ```sh
 whisper-subtitles 'movie.mkv' --minutes 10   # cues 0–10 min — start watching
@@ -56,8 +69,7 @@ whisper-subtitles 'movie.mkv' --from 10       # cues 10 min → end, merged in
 `--from N` starts at minute N; its cues are time-shifted to the real movie time
 and **merged** into the existing SRT (anything it re-covers is replaced, so
 re-runs don't duplicate). `--from`/`--minutes` compose: `--from 10 --minutes 5`
-does minutes 10–15. In VLC, reload the subtitle track after the second pass
-(**Subtitle → Sub Track**) to pick up the new cues.
+does minutes 10–15.
 
 > Tip: type `whisper-subtitles ` then **Tab-complete** the filename — the
 > installed zsh alias also lets unquoted paths with spaces and `[brackets]` work.
@@ -76,6 +88,7 @@ $PY subtitle_movie.py movie.mkv --whisper-model medium   # faster, less accurate
 $PY subtitle_movie.py movie.mkv --source-lang en         # skip language auto-detect
 $PY subtitle_movie.py movie.mkv --minutes 10             # only the first 10 minutes
 $PY subtitle_movie.py movie.mkv --from 10                # minute 10 → end, merged into the .srt
+$PY subtitle_movie.py movie.mkv --head 10                # first 10 min, write, then finish the rest
 $PY subtitle_movie.py movie.mkv --device cpu             # force CPU
 $PY subtitle_movie.py movie.mkv --no-translate           # source-language SRT, no API key
 ```

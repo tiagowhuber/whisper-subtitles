@@ -5,6 +5,8 @@
 #
 #   --from N      start at minute N (cues are merged into an existing .es.srt)
 #   --minutes N   transcribe only an N-minute window (e.g. the first N minutes)
+#   --head N      subtitle the first N minutes, write, then finish the rest in
+#                 the same run (start watching while it works)
 #
 # Configuration (all optional, via environment or ~/.config/whisper-subtitles.env):
 #   OPENAI_API_KEY            required — your OpenAI key
@@ -52,11 +54,11 @@ EXTRA_ARGS=()
 PATH_PARTS=()
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --minutes|--from)
+        --minutes|--from|--head)
             EXTRA_ARGS+=("$1" "${2:-}")
             shift 2 || { echo "$1 needs a value" >&2; exit 1; }
             ;;
-        --minutes=*|--from=*)
+        --minutes=*|--from=*|--head=*)
             EXTRA_ARGS+=("$1")
             shift
             ;;
@@ -68,7 +70,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ "${#PATH_PARTS[@]}" -lt 1 ]; then
-    echo "Usage: whisper-subtitles <video file> [--from N] [--minutes N]" >&2
+    echo "Usage: whisper-subtitles <video file> [--head N] [--from N] [--minutes N]" >&2
     exit 1
 fi
 FILE="${PATH_PARTS[*]}"

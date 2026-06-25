@@ -262,6 +262,29 @@ def merge_window(out_path: str, new_segments: list, win_start: float, win_end) -
     return kept + new_segments
 
 
+# ── Pipeline ─────────────────────────────────────────────────────────────────
+
+def process_window(model, device, args, out_path: str,
+                   start_min: float, dur_min) -> int:
+    """Transcribe + translate one [start_min, start_min+dur_min) window and splice
+    it into out_path. Returns the number of cues produced for this window."""
+    segments = transcribe(model, device, args.input, args.source_lang, start_min, dur_min)
+    if not segments:
+        log.warning("No speech segments in this window.")
+        return 0
+
+    if args.no_translate:
+        log.info("--no-translate set; writing source-language SRT.")
+    else:
+        translate_segments(segments, args.openai_model, args.batch_size)
+
+    win_start = start_min * 60.0
+    win_end = (start_min + dur_min) * 60.0 if dur_min else None
+    merged = merge_window(out_path, segments, win_start, win_end)
+    write_srt(merged, out_path)
+    return len(segments)
+
+
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 def main() -> int:
@@ -279,6 +302,10 @@ def main() -> int:
                    help="Transcribe only N minutes (the window length). "
                         "With --from this is the span starting there; alone it's the "
                         "first N minutes (default: to the end of the film).")
+    p.add_argument("--head", type=float, default=None, metavar="N",
+                   help="Two-stage: subtitle the first N minutes and write the SRT so "
+                        "you can start watching, then continue to the end in the same "
+                        "run, merging as it goes. (Conflicts with --from/--minutes.)")
     p.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto",
                    help="Where to run Whisper (default: auto; falls back to CPU on GPU OOM)")
     p.add_argument("--openai-model", default=OPENAI_MODEL,
@@ -299,11 +326,13 @@ def main() -> int:
     if args.start is not None and args.start < 0:
         log.error("--from must be zero or a positive number.")
         return 1
-
-    start_min = args.start or 0.0
-    dur_min = args.minutes
-    win_start = start_min * 60.0
-    win_end = (start_min + dur_min) * 60.0 if dur_min else None
+    if args.head is not None and args.head <= 0:
+        log.error("--head must be a positive number.")
+        return 1
+    if args.head is not None and (args.start is not None or args.minutes is not None):
+        log.error("--head can't be combined with --from/--minutes "
+                  "(it does both stages itself).")
+        return 1
 
     out_path = args.output
     if not out_path:
@@ -316,19 +345,26 @@ def main() -> int:
         return 1
 
     model, device = load_model(args.whisper_model, args.device)
-    segments = transcribe(model, device, args.input, args.source_lang, start_min, dur_min)
-    if not segments:
-        log.error("No speech segments found.")
-        return 1
 
-    if args.no_translate:
-        log.info("--no-translate set; writing source-language SRT.")
+    if args.head is not None:
+        # Stage 1: first N minutes → write the file so the user can start watching.
+        log.info("Stage 1/2: first %g minute(s) — write, then keep going.", args.head)
+        n1 = process_window(model, device, args, out_path, 0.0, args.head)
+        log.info("First %g minute(s) ready in '%s' — you can start watching. "
+                 "Continuing with the rest…", args.head, os.path.basename(out_path))
+        # Stage 2: minute N → end, merged into the same file.
+        log.info("Stage 2/2: minute %g → end.", args.head)
+        n2 = process_window(model, device, args, out_path, args.head, None)
+        if n1 + n2 == 0:
+            log.error("No speech segments found.")
+            return 1
     else:
-        translate_segments(segments, args.openai_model, args.batch_size)
+        start_min = args.start or 0.0
+        n = process_window(model, device, args, out_path, start_min, args.minutes)
+        if n == 0:
+            log.error("No speech segments found.")
+            return 1
 
-    # Splice this window into any existing SRT so multi-pass runs build one file.
-    segments = merge_window(out_path, segments, win_start, win_end)
-    write_srt(segments, out_path)
     log.info("Done. Open the movie in VLC — '%s' loads automatically.",
              os.path.basename(out_path))
     return 0
