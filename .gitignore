@@ -1,0 +1,29 @@
+# Secrets — never commit API keys
+*.env
+.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Runtime artifacts / logs
+*.log
+last_run.log
+
+# Generated subtitles / media (don't ship downloaded content or output)
+*.srt
+*.mkv
+*.mp4
+*.avi
+*.mov
+*.wav
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store

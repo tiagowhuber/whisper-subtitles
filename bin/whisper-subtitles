@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# whisper-subtitles <video file>
+# Generates a Spanish .srt next to the video. If a whisper voice daemon is
+# running, it's stopped to free the GPU and restarted afterwards (even on error).
+#
+# Configuration (all optional, via environment or ~/.config/whisper-subtitles.env):
+#   OPENAI_API_KEY            required — your OpenAI key
+#   WHISPER_SUBTITLES_PYTHON  python interpreter to use (default: the whisper-service
+#                             venv if present, else `python3`)
+#   WHISPER_SUBTITLES_DEVICE  auto | cpu | cuda   (default: auto)
+#   WHISPER_SUBTITLES_DAEMON  systemd --user unit to pause during the run
+#                             (default: whisper-daemon; set empty to disable)
+set -euo pipefail
+
+# --- locate this repo's subtitle_movie.py relative to this script ---
+SELF="$(readlink -f "$0")"
+HERE="$(dirname "$SELF")"
+SCRIPT="$HERE/../subtitle_movie.py"
+ENV_FILE="$HOME/.config/whisper-subtitles.env"
+
+# --- OpenAI key: environment, else the private env file ---
+if [ -z "${OPENAI_API_KEY:-}" ] && [ -f "$ENV_FILE" ]; then
+    set -a; . "$ENV_FILE"; set +a
+fi
+if [ -z "${OPENAI_API_KEY:-}" ]; then
+    echo "OPENAI_API_KEY is not set." >&2
+    echo "Put it in $ENV_FILE as a single line:  OPENAI_API_KEY=sk-..." >&2
+    exit 1
+fi
+
+# --- pick the Python interpreter ---
+PYTHON="${WHISPER_SUBTITLES_PYTHON:-}"
+if [ -z "$PYTHON" ]; then
+    if [ -x "$HOME/whisper-service/venv/bin/python" ]; then
+        PYTHON="$HOME/whisper-service/venv/bin/python"
+    else
+        PYTHON="python3"
+    fi
+fi
+
+DEVICE="${WHISPER_SUBTITLES_DEVICE:-auto}"
+DAEMON="${WHISPER_SUBTITLES_DAEMON-whisper-daemon}"
+
+# --- the video file (join all args so unquoted paths with spaces still work) ---
+if [ "$#" -lt 1 ]; then
+    echo "Usage: whisper-subtitles <video file>" >&2
+    exit 1
+fi
+FILE="$*"
+if [ ! -f "$FILE" ]; then
+    echo "File not found: $FILE" >&2
+    exit 1
+fi
+
+# --- pause the voice daemon (if any) to free VRAM; always restart on the way out ---
+DAEMON_WAS_ACTIVE=0
+if [ -n "$DAEMON" ] && command -v systemctl >/dev/null 2>&1 \
+   && systemctl --user is-active --quiet "$DAEMON"; then
+    DAEMON_WAS_ACTIVE=1
+fi
+restart_daemon() {
+    if [ "$DAEMON_WAS_ACTIVE" = 1 ]; then
+        echo ">> Restarting $DAEMON…"
+        systemctl --user start "$DAEMON" || true
+    fi
+}
+trap restart_daemon EXIT INT TERM
+
+if [ "$DAEMON_WAS_ACTIVE" = 1 ]; then
+    echo ">> Stopping $DAEMON to free the GPU…"
+    systemctl --user stop "$DAEMON"
+    sleep 3
+fi
+
+echo ">> Generating Spanish subtitles for: $FILE"
+"$PYTHON" "$SCRIPT" --device "$DEVICE" "$FILE"
+echo ">> Done. The .es.srt is next to your video; VLC loads it automatically."

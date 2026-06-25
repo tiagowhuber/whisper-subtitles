@@ -1,0 +1,7 @@
+# Transcription (local, GPU-accelerated). Already present in the shared
+# whisper-service venv this project reuses.
+openai-whisper
+torch
+
+# Translation backend.
+openai
