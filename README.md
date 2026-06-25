@@ -35,6 +35,13 @@ whisper-subtitles '/path/to/movie.mkv'
 `whisper-subtitles` writes `movie.es.srt` next to the video. Open the video in
 VLC and the subtitles load automatically (or **Subtitle → Add Subtitle File**).
 
+Only want a quick sample, or to test cheaply first? Limit it to the first N
+minutes (only that slice of audio is transcribed, so it's fast):
+
+```sh
+whisper-subtitles '/path/to/movie.mkv' --minutes 10
+```
+
 > Tip: type `whisper-subtitles ` then **Tab-complete** the filename — the
 > installed zsh alias also lets unquoted paths with spaces and `[brackets]` work.
 
@@ -50,6 +57,7 @@ $PY subtitle_movie.py movie.mkv                       # -> movie.es.srt
 $PY subtitle_movie.py movie.mkv -o out.es.srt
 $PY subtitle_movie.py movie.mkv --whisper-model medium   # faster, less accurate
 $PY subtitle_movie.py movie.mkv --source-lang en         # skip language auto-detect
+$PY subtitle_movie.py movie.mkv --minutes 10             # only the first 10 minutes
 $PY subtitle_movie.py movie.mkv --device cpu             # force CPU
 $PY subtitle_movie.py movie.mkv --no-translate           # source-language SRT, no API key
 ```

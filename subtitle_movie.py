@@ -72,11 +72,27 @@ def load_model(model_name: str, want_device: str = "auto"):
     return model, device
 
 
-def transcribe(model, device, path: str, source_lang):
-    """Transcribe the movie, keeping the source language. Returns Whisper segments."""
+def transcribe(model, device, path: str, source_lang, minutes=None):
+    """Transcribe the movie, keeping the source language. Returns Whisper segments.
+
+    If `minutes` is set, only the first `minutes` minutes of audio are
+    transcribed (the audio is sliced before Whisper sees it, so the rest of the
+    film is never processed).
+    """
+    import whisper
+
+    audio = path
+    if minutes:
+        # Whisper decodes to a 16 kHz mono float array; keep only the first slice.
+        full = whisper.load_audio(path)
+        keep = int(minutes * 60 * whisper.audio.SAMPLE_RATE)
+        audio = full[:keep]
+        log.info("Limiting to first %g minute(s) (%d of %d audio samples).",
+                 minutes, len(audio), len(full))
+
     log.info("Transcribing '%s' (language=%s) …", path, source_lang or "auto")
     result = model.transcribe(
-        path,
+        audio,
         task="transcribe",                 # keep SOURCE language, not English
         language=source_lang,              # None → auto-detect
         fp16=(device == "cuda"),
@@ -201,6 +217,8 @@ def main() -> int:
                    help=f"Whisper model size (default: {WHISPER_MODEL})")
     p.add_argument("--source-lang", default=None,
                    help="Source audio language code (default: auto-detect)")
+    p.add_argument("--minutes", type=float, default=None,
+                   help="Only subtitle the first N minutes of the movie (default: whole film)")
     p.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto",
                    help="Where to run Whisper (default: auto; falls back to CPU on GPU OOM)")
     p.add_argument("--openai-model", default=OPENAI_MODEL,
@@ -215,6 +233,10 @@ def main() -> int:
         log.error("Input file not found: %s", args.input)
         return 1
 
+    if args.minutes is not None and args.minutes <= 0:
+        log.error("--minutes must be a positive number.")
+        return 1
+
     out_path = args.output
     if not out_path:
         base, _ = os.path.splitext(args.input)
@@ -226,7 +248,7 @@ def main() -> int:
         return 1
 
     model, device = load_model(args.whisper_model, args.device)
-    segments = transcribe(model, device, args.input, args.source_lang)
+    segments = transcribe(model, device, args.input, args.source_lang, args.minutes)
     if not segments:
         log.error("No speech segments found.")
         return 1
