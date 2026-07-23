@@ -7,6 +7,7 @@
 #   --minutes N   transcribe only an N-minute window (e.g. the first N minutes)
 #   --head N      subtitle the first N minutes, write, then finish the rest in
 #                 the same run (start watching while it works)
+#   --no-translate  write a source-language .srt instead of translating to Spanish
 #
 # Configuration (all optional, via environment or ~/.config/whisper-subtitles.env):
 #   OPENAI_API_KEY            required — your OpenAI key
@@ -62,6 +63,10 @@ while [ "$#" -gt 0 ]; do
             EXTRA_ARGS+=("$1")
             shift
             ;;
+        --no-translate)
+            EXTRA_ARGS+=("$1")
+            shift
+            ;;
         *)
             PATH_PARTS+=("$1")
             shift
@@ -70,7 +75,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ "${#PATH_PARTS[@]}" -lt 1 ]; then
-    echo "Usage: whisper-subtitles <video file> [--head N] [--from N] [--minutes N]" >&2
+    echo "Usage: whisper-subtitles <video file> [--head N] [--from N] [--minutes N] [--no-translate]" >&2
     exit 1
 fi
 FILE="${PATH_PARTS[*]}"
